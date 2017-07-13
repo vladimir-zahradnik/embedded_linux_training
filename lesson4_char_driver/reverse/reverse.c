@@ -115,6 +115,8 @@ static int dev_open(struct inode *inodep, struct file *filep) {
 }
 
 static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset) {
+    short msglen = size_of_message;
+
     // TODO: Reverse the text
 
    // copy_to_user has the format (* to, *from, length) and returns 0 on success
@@ -122,7 +124,8 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
 
    if (error_count == 0) {
       printk(KERN_INFO "ReverseLKM: Sent %d characters to the user\n", size_of_message);
-      return (size_of_message = 0); // clear the position to the start and return 0
+      size_of_message = 0;
+      return msglen; // clear the position to the start and return 0
    } else {
       printk(KERN_INFO "ReverseLKM: Failed to send %d characters to the user\n", error_count);
       return -EFAULT;      // Failed -- return a bad address message (i.e. -14)
