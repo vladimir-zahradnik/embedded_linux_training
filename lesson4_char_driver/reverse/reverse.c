@@ -8,6 +8,7 @@
 #include <linux/mutex.h> // Limit LKM use to only one concurrent process
 #define  DEVICE_NAME "reverse"
 #define  CLASS_NAME  "training"
+#define  MAX_MSG_SIZE 255
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Vladimir Zahradnik");
@@ -16,7 +17,8 @@ MODULE_VERSION("0.1");
 
 static int    majorNumber;
 static dev_t  dev_no;
-static char   message[256] = {0};
+static char   message[MAX_MSG_SIZE + 1] = {0}; // Remember to store \0 character
+static short  size_of_message;
 static int    numberOpens = 0;
 static struct cdev* kernel_cdev;
 static struct class*  reverseClass  = NULL;
@@ -113,13 +115,36 @@ static int dev_open(struct inode *inodep, struct file *filep) {
 }
 
 static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset) {
-    // TODO: Implement code
-    return 0;
+    // TODO: Reverse the text
+
+   // copy_to_user has the format (* to, *from, length) and returns 0 on success
+   int error_count = copy_to_user(buffer, message, size_of_message);
+
+   if (error_count == 0) {
+      printk(KERN_INFO "ReverseLKM: Sent %d characters to the user\n", size_of_message);
+      return (size_of_message = 0); // clear the position to the start and return 0
+   } else {
+      printk(KERN_INFO "ReverseLKM: Failed to send %d characters to the user\n", error_count);
+      return -EFAULT;      // Failed -- return a bad address message (i.e. -14)
+   }
 }
 
 static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, loff_t *offset) {
-    // TODO: Implement code
-    return 0;
+    if (len > MAX_MSG_SIZE) {
+        printk(KERN_INFO "ReverseLKM: Input message exceeds max length\n");
+        return -EFAULT;
+    }
+
+    // copy_from_user has the format (* to, *from, length) and returns 0 on success
+    int error_count = copy_from_user(message, buffer, len);
+
+    if (error_count == 0) {
+      printk(KERN_INFO "ReverseLKM: Received %zu characters from the user\n", len);
+      return (size_of_message = len);
+   } else {
+      printk(KERN_INFO "ReverseLKM: Failed to receive %d characters from the user\n", error_count);
+      return -EFAULT;      // Failed -- return a bad address message (i.e. -14)
+   }
 }
 
 static int dev_release(struct inode *inodep, struct file *filep) {
