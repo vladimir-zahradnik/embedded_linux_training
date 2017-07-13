@@ -68,6 +68,7 @@ static int __init reverse_init(void) {
     // Register the device driver -- create node under /dev
     reverseDevice = device_create(reverseClass, NULL, dev_no, NULL, DEVICE_NAME);
     if (IS_ERR(reverseDevice)) {
+        class_destroy(reverseClass);
         unregister_chrdev_region(majorNumber, 1);
         printk(KERN_ALERT "ReverseLKM: Failed to create the device\n");
         return PTR_ERR(reverseDevice);
@@ -77,7 +78,12 @@ static int __init reverse_init(void) {
     // Pass cdev struct to kernel. Do it as a last init step, since module
     // should be fully initialized before handling cdev to kernel
     if((ret = cdev_add(kernel_cdev, dev_no, 1)) < 0) {
+	    device_destroy(reverseClass, dev_no);
+	    class_unregister(reverseClass);
+        class_destroy(reverseClass);
+        unregister_chrdev_region(majorNumber, 1);
         printk(KERN_INFO "ReverseLKM: Unable to allocate cdev");
+
         return ret;
     }
 
