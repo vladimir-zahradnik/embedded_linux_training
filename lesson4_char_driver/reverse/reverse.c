@@ -4,9 +4,11 @@
 #include <linux/device.h> 
 #include <linux/fs.h>
 #include <asm/uaccess.h>
+#include <linux/uaccess.h> // FIXME Now we use two definitions of uaccess. Remove legacy one.
 #include <linux/cdev.h>
 #include <linux/mutex.h> // Limit LKM use to only one concurrent process
-#define  DEVICE_NAME "reverse"
+#define  DEVICE_COUNT = 1;
+#define  DEVICE_NAME "reverse0"
 #define  CLASS_NAME  "training"
 #define  MAX_MSG_SIZE 255
 
@@ -31,6 +33,8 @@ static int     dev_open(struct inode *, struct file *);
 static int     dev_release(struct inode *, struct file *);
 static ssize_t dev_read(struct file *, char *, size_t, loff_t *);
 static ssize_t dev_write(struct file *, const char *, size_t, loff_t *);
+
+static void    reverse_string(char *str, size_t len);
 
 static struct file_operations fops =
 {
@@ -118,15 +122,10 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
     short msglen = size_of_message;
 
     // Reverse the text
-    char reverse_msg[MAX_MSG_SIZE + 1] = {0}
-
-    for (int i = 0; i < msglen; ++i) {
-        reverse_msg[i] = message[msglen - i];
-    }
-    reverse_msg[msglen] = '\0';
+    reverse_string(message, msglen);
 
    // copy_to_user has the format (* to, *from, length) and returns 0 on success
-   int error_count = copy_to_user(buffer, reverse_msg, size_of_message);
+   int error_count = copy_to_user(buffer, message, size_of_message);
 
    if (error_count == 0) {
       printk(KERN_INFO "ReverseLKM: Sent %d characters to the user\n", size_of_message);
@@ -161,6 +160,21 @@ static int dev_release(struct inode *inodep, struct file *filep) {
     mutex_unlock(&reverse_mutex);
     printk(KERN_INFO "ReverseLKM: Device successfully closed\n");
     return 0;
+}
+
+static void reverse_string(char* message, size_t len) {
+    char temp;
+    size_t i;
+    size_t k;
+
+    // Keep newline at the end of string
+    k = (message[len-1] == '\n') ? len-2 : len-1;
+
+    for (i = 0; i < len/2; ++i) {
+        temp = message[k-i];
+        message[k-i] = message[i];
+        message[i] = temp;
+    }
 }
 
 module_init(reverse_init);
