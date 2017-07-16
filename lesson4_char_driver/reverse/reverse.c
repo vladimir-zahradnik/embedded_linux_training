@@ -117,10 +117,16 @@ static int dev_open(struct inode *inodep, struct file *filep) {
 static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset) {
     short msglen = size_of_message;
 
-    // TODO: Reverse the text
+    // Reverse the text
+    char reverse_msg[MAX_MSG_SIZE + 1] = {0}
+
+    for (int i = 0; i < msglen; ++i) {
+        reverse_msg[i] = message[msglen - i];
+    }
+    reverse_msg[msglen] = '\0';
 
    // copy_to_user has the format (* to, *from, length) and returns 0 on success
-   int error_count = copy_to_user(buffer, message, size_of_message);
+   int error_count = copy_to_user(buffer, reverse_msg, size_of_message);
 
    if (error_count == 0) {
       printk(KERN_INFO "ReverseLKM: Sent %d characters to the user\n", size_of_message);
