@@ -7,22 +7,23 @@
 #include <linux/uaccess.h> // FIXME Now we use two definitions of uaccess. Remove legacy one.
 #include <linux/cdev.h>
 #include <linux/mutex.h> // Limit LKM use to only one concurrent process
+#include <linux/vmalloc.h>
 #define  DEVICE_COUNT = 1;
-#define  DEVICE_NAME "reverse0"
+#define  DEVICE_NAME "reverse"
 #define  CLASS_NAME  "training"
 #define  MAX_MSG_SIZE 255
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Vladimir Zahradnik");
-MODULE_DESCRIPTION("Character Linux driver to output reverse string as received on input.");
+MODULE_DESCRIPTION("Character Linux driver using kernel memory.");
 MODULE_VERSION("0.1");
 
 static int    majorNumber;
 static dev_t  dev_no;
-static char   message[MAX_MSG_SIZE + 1] = {0}; // Remember to store \0 character
+static char*  message = NULL;
 static short  size_of_message;
 static int    numberOpens = 0;
-static struct cdev* kernel_cdev;
+static struct cdev* kernel_cdev = NULL;
 static struct class*  reverseClass  = NULL;
 static struct device* reverseDevice = NULL;
 
@@ -36,6 +37,10 @@ static ssize_t dev_write(struct file *, const char *, size_t, loff_t *);
 
 static void    reverse_string(char *str, size_t len);
 
+// Helper functions to allocate/release resources
+static int alloc_resources(void);
+static void release_resources(void);
+
 static struct file_operations fops =
 {
    .open = dev_open,
@@ -48,25 +53,15 @@ static int __init reverse_init(void) {
     int ret;
     printk(KERN_INFO "ReverseLKM: Initializing module\n");
 
-    // Allocate cdev struct
-    kernel_cdev = cdev_alloc();
-    kernel_cdev->ops = &fops;
-    kernel_cdev->owner = THIS_MODULE;
-
-    // Dynamically allocate major device number
-    if ((ret = alloc_chrdev_region(&dev_no, 0, 1, DEVICE_NAME)) < 0) {
-        printk(KERN_ALERT "ReverseLKM: Failed to register a major number\n");
+    if ((ret = alloc_resources()) < 0) {
         return ret;
     }
-
-    majorNumber = MAJOR(dev_no);
-    printk(KERN_INFO "ReverseLKM: Registered correctly with major number %d\n", majorNumber);
 
     // Register the device class
     reverseClass = class_create(THIS_MODULE, CLASS_NAME);
     if (IS_ERR(reverseClass)) {
-        unregister_chrdev_region(majorNumber, 1);
         printk(KERN_ALERT "ReverseLKM: Failed to register device class\n");
+        release_resources();
         return PTR_ERR(reverseClass);
     }
     printk(KERN_INFO "ReverseLKM: Device class registered correctly\n");
@@ -74,22 +69,17 @@ static int __init reverse_init(void) {
     // Register the device driver -- create node under /dev
     reverseDevice = device_create(reverseClass, NULL, dev_no, NULL, DEVICE_NAME);
     if (IS_ERR(reverseDevice)) {
-        class_destroy(reverseClass);
-        unregister_chrdev_region(majorNumber, 1);
         printk(KERN_ALERT "ReverseLKM: Failed to create the device\n");
-        return PTR_ERR(reverseDevice);
+        release_resources();
+        return PTR_ERR(reverseDevice);;
     }
     printk(KERN_INFO "ReverseLKM: Device node created correctly\n");
 
     // Pass cdev struct to kernel. Do it as a last init step, since module
     // should be fully initialized before handling cdev to kernel
     if((ret = cdev_add(kernel_cdev, dev_no, 1)) < 0) {
-	    device_destroy(reverseClass, dev_no);
-	    class_unregister(reverseClass);
-        class_destroy(reverseClass);
-        unregister_chrdev_region(majorNumber, 1);
         printk(KERN_INFO "ReverseLKM: Unable to allocate cdev");
-
+        release_resources();
         return ret;
     }
 
@@ -99,11 +89,7 @@ static int __init reverse_init(void) {
 
 static void __exit reverse_exit(void) {
     mutex_destroy(&reverse_mutex);
-    cdev_del(kernel_cdev);
-    device_destroy(reverseClass, dev_no);
-    class_unregister(reverseClass);
-    class_destroy(reverseClass);
-    unregister_chrdev_region(majorNumber, 1);
+    release_resources();
     printk(KERN_INFO "ReverseLKM: Module unloaded!\n");
 }
 
@@ -175,6 +161,56 @@ static void reverse_string(char* message, size_t len) {
         message[k-i] = message[i];
         message[i] = temp;
     }
+}
+
+static int alloc_resources() {
+    int ret = 0;
+
+    // Allocate buffer
+    message = vmalloc((MAX_MSG_SIZE + 1) * sizeof(char)); // remember to store '\0' character
+
+    if (!message) {
+        printk(KERN_ALERT "ReverseLKM: Unable to allocate memory\n");
+        return -1;
+    }
+    printk(KERN_ALERT "ReverseLKM: Memory allocated\n");
+
+    // Allocate cdev struct
+    kernel_cdev = cdev_alloc();
+    kernel_cdev->ops = &fops;
+    kernel_cdev->owner = THIS_MODULE;
+
+    // Dynamically allocate major device number
+    if ((ret = alloc_chrdev_region(&dev_no, 0, 1, DEVICE_NAME)) < 0) {
+        printk(KERN_ALERT "ReverseLKM: Failed to register a major number\n");
+        return ret;
+    }
+
+    majorNumber = MAJOR(dev_no);
+    printk(KERN_INFO "ReverseLKM: Registered correctly with major number %d\n", majorNumber);
+    return ret;
+}
+
+static void release_resources() {
+    if (kernel_cdev) {
+        cdev_del(kernel_cdev);
+    }
+
+    if (reverseDevice) {
+        device_destroy(reverseClass, dev_no);
+    }
+
+    if (reverseClass) {
+        class_unregister(reverseClass);
+        class_destroy(reverseClass);
+    }
+
+    if (message) {
+        vfree(message);
+    }
+
+    unregister_chrdev_region(majorNumber, 1);
+
 }
 
 module_init(reverse_init);
